@@ -69,7 +69,7 @@
     <!-- 3D Canvas Container -->
     <div id="canvas-container"></div>
 
-    <!-- Hidden Video Preview for MediaPipe (can be toggled or kept hidden) -->
+    <!-- Hidden Video Preview for MediaPipe -->
     <video id="webcam-video" class="hidden" playsinline></video>
 
     <!-- UI Layer -->
@@ -241,8 +241,8 @@
     <!-- Main Application Script -->
     <script>
         // --- State Management ---
-        let scene, camera, renderer, currentVrm = null;
-        let controls;
+        let scene = null, camera = null, renderer = null, currentVrm = null;
+        let controls = null;
         let hands = null, cameraStream = null;
         let targetFPS = 30;
         let handSensitivity = 1.2;
@@ -268,7 +268,7 @@
             initMediaPipeHands();
             setupEventListeners();
             
-            // Try loading default VRM with graceful fallback message if 404/Invalid URL
+            // Try loading default VRM
             loadVRM('./VRM/01.vrm');
         });
 
@@ -306,6 +306,7 @@
         }
 
         function onWindowResize() {
+            if (!camera || !renderer) return;
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -315,14 +316,12 @@
         function loadVRM(url) {
             updateStatus('amber', `載入 VRM 中 (${url})...`);
             
-            // Validate URL before attempting GLTFLoader to prevent invalid URL exceptions
             if (!url || url.trim() === '' || url.includes('undefined') || url === 'undefined') {
                 updateStatus('rose', '無效的 VRM 檔案路徑');
                 createPlaceholderAvatar();
                 return;
             }
 
-            // If running in sandbox preview and trying to load relative path that might 404, we wrap in try-catch / graceful fallback
             const loader = new THREE.GLTFLoader();
             loader.load(
                 url,
@@ -336,7 +335,6 @@
                         currentVrm = vrm;
                         scene.add(vrm.scene);
 
-                        // Rotate model to face camera if needed
                         vrm.scene.rotation.y = Math.PI;
 
                         updateStatus('emerald', `成功載入 VRM (${url.split('/').pop()}) - 準備手部動補`);
@@ -356,14 +354,14 @@
                     }
                 },
                 (error) => {
-                    console.warn('GLTFLoader error (likely 404 for ./VRM/01.vrm in sandbox/preview):', error);
+                    console.warn('GLTFLoader error (likely 404 for ./VRM/01.vrm):', error);
                     updateStatus('amber', `找不到 ${url}，請點選選單上傳 .vrm 檔案`);
                     createPlaceholderAvatar();
                 }
             );
         }
 
-        // Fallback procedural visualizer avatar so the user isn't stuck with empty canvas if ./VRM/01.vrm isn't present yet
+        // Fallback procedural visualizer avatar
         function createPlaceholderAvatar() {
             if (currentVrm) {
                 scene.remove(currentVrm.scene);
@@ -477,50 +475,29 @@
                 return;
             }
 
-            const leftHand = currentVrm.humanoid.getNormalizedBoneNode(THREE.VRMSkeletonBoneName.LeftHand);
-            const rightHand = currentVrm.humanoid.getNormalizedBoneNode(THREE.VRMSkeletonBoneName.RightHand);
-
-            // Iterate over detected hands
             for (let i = 0; i < results.multiHandLandmarks.length; i++) {
                 const landmarks = results.multiHandLandmarks[i];
-                const handedness = results.multiHandedness[i].label; // 'Left' or 'Right' in MediaPipe mirror view
-
-                // In MediaPipe, left/right can be mirrored depending on camera setup. Let's map accordingly.
-                // MediaPipe 'Right' corresponds to user's Right hand (character's Left hand in standard forward view, or vice-versa).
-                // Here we map finger joints for maximum dexterity.
-                
+                const handedness = results.multiHandedness[i].label; // 'Left' or 'Right'
                 const isRightHand = handedness === 'Right';
                 
-                // Map hand wrist position or orientation if needed, and finger phalanges
                 applyFingerRotation(landmarks, isRightHand);
             }
 
-            // Update VRM pose
-            currentVrm.update(0.016);
+            if (currentVrm && typeof currentVrm.update === 'function') {
+                currentVrm.update(0.016);
+            }
         }
 
-        // Helper to map MediaPipe landmarks to VRM finger bones
         function applyFingerRotation(landmarks, isRight) {
             if (!currentVrm || !currentVrm.humanoid) return;
 
-            // MediaPipe Hand Landmark indices:
-            // Thumb: 1, 2, 3, 4
-            // Index: 5, 6, 7, 8
-            // Middle: 9, 10, 11, 12
-            // Ring: 13, 14, 15, 16
-            // Pinky: 17, 18, 19, 20
-
             const prefix = isRight ? 'Right' : 'Left';
 
-            // Function to calculate simple bend based on joint angles or relative distance
-            // For robust finger tracking without full inverse kinematics, we apply calculated rotations to Proximal, Intermediate, Distal bones.
-            
             const mapFinger = (mcpIdx, pipIdx, dipIdx, boneNamePrefix) => {
                 const mcp = landmarks[mcpIdx];
                 const pip = landmarks[pipIdx];
                 const dip = landmarks[dipIdx];
 
-                // Approximate bend angle from vector dot products
                 const v1 = { x: pip.x - mcp.x, y: pip.y - mcp.y, z: pip.z - mcp.z };
                 const v2 = { x: dip.x - pip.x, y: dip.y - pip.y, z: dip.z - pip.z };
                 
@@ -552,23 +529,24 @@
                 mapFinger(13, 14, 15, 'Ring');
                 mapFinger(17, 18, 19, 'Little');
             } catch (e) {
-                // Ignore missing bone names gracefully across different VRM humanoids
+                // Ignore missing bone names gracefully
             }
         }
 
-        // Render loop
+        // Render loop with safety check
         function animate() {
             requestAnimationFrame(animate);
-            if (currentVrm) {
+            if (currentVrm && typeof currentVrm.update === 'function') {
                 currentVrm.update(0.016);
             }
-            renderer.render(scene, camera);
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
         }
         animate();
 
         // --- UI Interactions & Event Listeners ---
         function setupEventListeners() {
-            // Click anywhere on screen to toggle settings (unless clicking interactive elements)
             window.addEventListener('click', (e) => {
                 if (e.target.closest('.interactive') || e.target.closest('#settings-panel') || e.target.closest('#help-modal')) {
                     return;
@@ -576,14 +554,12 @@
                 toggleSettings(!isSettingsOpen);
             });
 
-            // Camera selector change
             cameraSelect.addEventListener('change', (e) => {
                 if (e.target.value) {
                     startCamera(e.target.value);
                 }
             });
 
-            // VRM selector change
             vrmSelect.addEventListener('change', (e) => {
                 const val = e.target.value;
                 if (val === 'custom') {
@@ -593,7 +569,6 @@
                 }
             });
 
-            // Custom VRM file input handler
             customVrmInput.addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) {
@@ -602,7 +577,6 @@
                 }
             });
 
-            // Sensitivity slider
             sensitivityRange.addEventListener('input', (e) => {
                 handSensitivity = parseFloat(e.target.value);
                 sensitivityValue.innerText = `${handSensitivity.toFixed(1)}x`;
