@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand-Tracking VRM Viewer (GitHub Pages Ready)</title>
+    <!-- Tailwind CSS for modern, sleek UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts - Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Three.js UMD -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- GLTFLoader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <!-- OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- @pixiv/three-vrm UMD -->
+    <script src="https://unpkg.com/@pixiv/three-vrm@2.0.6/lib/three-vrm.js"></script>
+
+    <!-- MediaPipe Hands CDN scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            overflow: hidden;
+            margin: 0;
+        }
+        /* Transparent canvas background setup */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+            background: transparent;
+        }
+        /* UI Layer on top */
+        .ui-layer {
+            position: relative;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .interactive {
+            pointer-events: auto;
+        }
+        /* Custom scrollbar for settings */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(56, 189, 248, 0.5);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen">
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Hidden Video Preview for MediaPipe (can be toggled or kept hidden) -->
+    <video id="webcam-video" class="hidden" playsinline></video>
+
+    <!-- UI Layer -->
+    <div class="ui-layer w-full h-full flex flex-col justify-between p-4 sm:p-6 select-none">
+        
+        <!-- Top bar: Status & GitHub Guide Button -->
+        <div class="flex justify-between items-center w-full">
+            <div id="status-badge" class="interactive flex items-center gap-2 bg-slate-900/70 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700/50 shadow-lg text-xs sm:text-sm text-sky-400">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" id="status-dot"></span>
+                <span id="status-text">初始化中 (載入 ./VRM/01.vrm)...</span>
+            </div>
+            
+            <div class="flex gap-2">
+                <button onclick="toggleHelpModal(true)" class="interactive bg-slate-900/70 hover:bg-slate-800 backdrop-blur-md text-slate-300 hover:text-white px-3.5 py-2 rounded-full border border-slate-700/50 shadow-lg text-xs sm:text-sm transition flex items-center gap-2">
+                    <i class="fa-brands fa-github"></i>
+                    <span class="hidden sm:inline">GitHub 部署指南</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Center tap hint (visible when settings are hidden) -->
+        <div id="tap-hint" class="absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-500 opacity-80">
+            <div class="bg-slate-950/60 backdrop-blur-md border border-slate-800 px-6 py-3 rounded-full text-xs sm:text-sm text-slate-300 shadow-2xl animate-bounce">
+                👆 點擊畫面任意處開啟 / 關閉控制面板
+            </div>
+        </div>
+
+        <!-- Bottom info or debug info -->
+        <div class="flex justify-between items-end w-full">
+            <div class="text-xs text-slate-400 bg-slate-900/50 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-slate-800/60 hidden sm:block">
+                提示：僅啟動手部與手指動補 (MediaPipe Hands)，保持面部與身體靜止。
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Panel Modal (Hidden by default, toggled by clicking screen) -->
+    <div id="settings-panel" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 transition-all duration-300 opacity-0 pointer-events-none scale-95">
+        <div class="bg-slate-900/90 border border-slate-700/80 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <!-- Panel Header -->
+            <div class="flex justify-between items-center px-6 py-4 border-b border-slate-800 bg-slate-950/50">
+                <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-sky-400"></i>
+                    手部動補 VRM 設定
+                </h2>
+                <button onclick="toggleSettings(false)" class="text-slate-400 hover:text-white transition w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-800">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Panel Body -->
+            <div class="p-6 overflow-y-auto space-y-5 text-sm">
+                
+                <!-- Camera Selection -->
+                <div class="space-y-2">
+                    <label class="block text-slate-300 font-medium">
+                        <i class="fa-solid fa-video mr-1.5 text-sky-400"></i>鏡頭選擇 (Camera)
+                    </label>
+                    <select id="camera-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-sky-500 transition">
+                        <option value="">載入可用鏡頭中...</option>
+                    </select>
+                </div>
+
+                <!-- VRM Model Selection -->
+                <div class="space-y-2">
+                    <label class="block text-slate-300 font-medium">
+                        <i class="fa-solid fa-cube mr-1.5 text-sky-400"></i>VRM 模型選擇 (抓取 ./VRM/)
+                    </label>
+                    <select id="vrm-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-sky-500 transition">
+                        <option value="./VRM/01.vrm">./VRM/01.vrm (預設)</option>
+                        <option value="./VRM/02.vrm">./VRM/02.vrm</option>
+                        <option value="./VRM/avatar.vrm">./VRM/avatar.vrm</option>
+                        <option value="custom">自訂上傳 (.vrm)...</option>
+                    </select>
+                    <input type="file" id="custom-vrm-input" accept=".vrm" class="hidden">
+                </div>
+
+                <!-- FPS Selector -->
+                <div class="space-y-2">
+                    <label class="block text-slate-300 font-medium">
+                        <i class="fa-solid fa-gauge-high mr-1.5 text-sky-400"></i>偵率限制 (FPS)
+                    </label>
+                    <div class="grid grid-cols-3 gap-3">
+                        <button onclick="setFPS(15)" id="fps-15" class="fps-btn py-2 rounded-xl border border-slate-700 bg-slate-950 hover:bg-slate-800 text-slate-300 transition font-medium">15 FPS</button>
+                        <button onclick="setFPS(30)" id="fps-30" class="fps-btn py-2 rounded-xl border border-sky-500 bg-sky-500/20 text-sky-300 transition font-medium">30 FPS</button>
+                        <button onclick="setFPS(60)" id="fps-60" class="fps-btn py-2 rounded-xl border border-slate-700 bg-slate-950 hover:bg-slate-800 text-slate-300 transition font-medium">60 FPS</button>
+                    </div>
+                </div>
+
+                <!-- Sensitivity Slider -->
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <label class="block text-slate-300 font-medium">
+                            <i class="fa-solid fa-hand mr-1.5 text-sky-400"></i>手部追蹤靈敏度
+                        </label>
+                        <span id="sensitivity-value" class="text-xs font-mono text-sky-400 bg-sky-950/60 px-2 py-0.5 rounded border border-sky-800/50">1.2x</span>
+                    </div>
+                    <input type="range" id="sensitivity-range" min="0.5" max="2.5" step="0.1" value="1.2" 
+                           class="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-sky-500 border border-slate-700">
+                </div>
+
+                <!-- Quick toggles info -->
+                <div class="bg-slate-950/50 border border-slate-800 p-3.5 rounded-xl text-xs text-slate-400 space-y-1">
+                    <div class="font-medium text-slate-300">💡 提示：</div>
+                    <div>• 僅對手腕、手掌與手指關節進行動補映射。</div>
+                    <div>• 點擊面板外任意區域即可隱藏面板並繼續檢視。</div>
+                </div>
+
+            </div>
+
+            <!-- Panel Footer -->
+            <div class="px-6 py-4 border-t border-slate-800 bg-slate-950/50 flex justify-end gap-3">
+                <button onclick="toggleSettings(false)" class="bg-sky-600 hover:bg-sky-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg shadow-sky-600/30">
+                    確認 / 關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- GitHub Pages Guide Modal -->
+    <div id="help-modal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 transition-all duration-300 opacity-0 pointer-events-none scale-95">
+        <div class="bg-slate-900/95 border border-slate-700/80 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center px-6 py-4 border-b border-slate-800 bg-slate-950/50">
+                <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <i class="fa-brands fa-github text-sky-400"></i>
+                    GitHub Pages 部署指南
+                </h2>
+                <button onclick="toggleHelpModal(false)" class="text-slate-400 hover:text-white transition w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-800">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-4 text-sm text-slate-300">
+                <p>若要將此網頁部署至 GitHub Pages 並且讓 <code class="text-sky-400 bg-slate-950 px-1.5 py-0.5 rounded">./VRM/01.vrm</code> 順利讀取，請遵照以下步驟：</p>
+                
+                <div class="space-y-2">
+                    <div class="font-semibold text-white">1. 資料夾結構要求</div>
+                    <pre class="bg-slate-950 p-3 rounded-xl text-xs text-sky-300 border border-slate-800 font-mono">my-vrm-repo/
+├── index.html  (本網頁)
+└── VRM/
+    ├── 01.vrm  (預設模型)
+    └── 02.vrm  (其他模型)</pre>
+                </div>
+
+                <div class="space-y-2">
+                    <div class="font-semibold text-white">2. 上傳至 GitHub</div>
+                    <p class="text-xs text-slate-400">將專案推送至您的 GitHub 儲存庫（Repository）的 <code class="text-slate-200">main</code> 或 <code class="text-slate-200">master</code> 分支。</p>
+                </div>
+
+                <div class="space-y-2">
+                    <div class="font-semibold text-white">3. 啟用 GitHub Pages</div>
+                    <ol class="list-decimal list-inside space-y-1 text-xs text-slate-400">
+                        <li>進入您的 GitHub Repository 頁面。</li>
+                        <li>點選上方分頁的 <strong class="text-slate-200">Settings</strong>。</li>
+                        <li>在左側欄點選 <strong class="text-slate-200">Pages</strong>。</li>
+                        <li>在 <strong class="text-slate-200">Build and deployment</strong> 的 <strong class="text-slate-200">Source</strong> 選擇 <code class="text-slate-200">Deploy from a branch</code>。</li>
+                        <li>Branch 選擇 <code class="text-slate-200">main</code> (或 root) 並按下 <strong class="text-slate-200">Save</strong>。</li>
+                        <li>稍等 1-2 分鐘即可透過 GitHub 產生的網址在瀏覽器（支援 WebCam 攝影機）中開啟！</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-slate-800 bg-slate-950/50 flex justify-end">
+                <button onclick="toggleHelpModal(false)" class="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2.5 rounded-xl font-medium transition">
+                    了解
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Script -->
+    <script>
+        // --- State Management ---
+        let scene, camera, renderer, currentVrm = null;
+        let controls;
+        let hands = null, cameraStream = null;
+        let targetFPS = 30;
+        let handSensitivity = 1.2;
+        let lastFrameTime = 0;
+        let isSettingsOpen = false;
+        let currentCameraId = '';
+
+        // DOM Elements
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const tapHint = document.getElementById('tap-hint');
+        const settingsPanel = document.getElementById('settings-panel');
+        const helpModal = document.getElementById('help-modal');
+        const cameraSelect = document.getElementById('camera-select');
+        const vrmSelect = document.getElementById('vrm-select');
+        const customVrmInput = document.getElementById('custom-vrm-input');
+        const sensitivityRange = document.getElementById('sensitivity-range');
+        const sensitivityValue = document.getElementById('sensitivity-value');
+
+        // --- Initialization ---
+        window.addEventListener('DOMContentLoaded', () => {
+            initThreeJS();
+            initMediaPipeHands();
+            setupEventListeners();
+            
+            // Try loading default VRM with graceful fallback message if 404/Invalid URL
+            loadVRM('./VRM/01.vrm');
+        });
+
+        // --- Three.js Scene Setup ---
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20.0);
+            camera.position.set(0.0, 1.4, 1.8);
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            container.appendChild(renderer.domElement);
+
+            // OrbitControls for camera view adjustment
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.screenSpacePanning = true;
+            controls.target.set(0.0, 1.4, 0.0);
+            controls.update();
+
+            // Lighting
+            const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+            light.position.set(1.0, 1.0, 1.0).normalize();
+            scene.add(light);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            // Window resize handler
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Load VRM Model (.vrm) with Fallback Handling ---
+        function loadVRM(url) {
+            updateStatus('amber', `載入 VRM 中 (${url})...`);
+            
+            // Validate URL before attempting GLTFLoader to prevent invalid URL exceptions
+            if (!url || url.trim() === '' || url.includes('undefined') || url === 'undefined') {
+                updateStatus('rose', '無效的 VRM 檔案路徑');
+                createPlaceholderAvatar();
+                return;
+            }
+
+            // If running in sandbox preview and trying to load relative path that might 404, we wrap in try-catch / graceful fallback
+            const loader = new THREE.GLTFLoader();
+            loader.load(
+                url,
+                (gltf) => {
+                    THREE.VRM.from(gltf).then((vrm) => {
+                        if (currentVrm) {
+                            scene.remove(currentVrm.scene);
+                            if (currentVrm.dispose) currentVrm.dispose();
+                        }
+
+                        currentVrm = vrm;
+                        scene.add(vrm.scene);
+
+                        // Rotate model to face camera if needed
+                        vrm.scene.rotation.y = Math.PI;
+
+                        updateStatus('emerald', `成功載入 VRM (${url.split('/').pop()}) - 準備手部動補`);
+                        console.log('VRM loaded successfully:', vrm);
+                    }).catch((err) => {
+                        console.error('VRM parse error:', err);
+                        updateStatus('amber', `VRM 解析失敗，已切換至預設模型或請上傳`);
+                        createPlaceholderAvatar();
+                    });
+                },
+                (progress) => {
+                    if (progress.total && progress.total > 0) {
+                        const percent = Math.min(100, Math.round((progress.loaded / progress.total) * 100));
+                        if (percent < 100) {
+                            updateStatus('amber', `載入模型中... ${percent}%`);
+                        }
+                    }
+                },
+                (error) => {
+                    console.warn('GLTFLoader error (likely 404 for ./VRM/01.vrm in sandbox/preview):', error);
+                    updateStatus('amber', `找不到 ${url}，請點選選單上傳 .vrm 檔案`);
+                    createPlaceholderAvatar();
+                }
+            );
+        }
+
+        // Fallback procedural visualizer avatar so the user isn't stuck with empty canvas if ./VRM/01.vrm isn't present yet
+        function createPlaceholderAvatar() {
+            if (currentVrm) {
+                scene.remove(currentVrm.scene);
+                currentVrm = null;
+            }
+
+            const group = new THREE.Group();
+            const sphereGeo = new THREE.SphereGeometry(0.2, 32, 32);
+            const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3 });
+            const head = new THREE.Mesh(sphereGeo, mat);
+            head.position.set(0, 1.5, 0);
+            group.add(head);
+
+            const bodyGeo = new THREE.CylinderGeometry(0.15, 0.25, 0.6, 16);
+            const body = new THREE.Mesh(bodyGeo, mat);
+            body.position.set(0, 1.0, 0);
+            group.add(body);
+
+            scene.add(group);
+            currentVrm = {
+                scene: group,
+                update: () => {},
+                dispose: () => { scene.remove(group); },
+                humanoid: {
+                    getNormalizedBoneNode: () => null
+                }
+            };
+        }
+
+        // --- MediaPipe Hands Setup ---
+        function initMediaPipeHands() {
+            const videoElement = document.getElementById('webcam-video');
+
+            hands = new window.Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+
+            hands.onResults(onHandResults);
+
+            // Enumerate cameras
+            navigator.mediaDevices.enumerateDevices()
+                .then(devices => {
+                    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                    cameraSelect.innerHTML = '';
+                    videoDevices.forEach((device, index) => {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.text = device.label || `攝影機 ${index + 1}`;
+                        cameraSelect.appendChild(option);
+                    });
+
+                    if (videoDevices.length > 0) {
+                        currentCameraId = videoDevices[0].deviceId;
+                        startCamera(currentCameraId);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error enumerating devices:', err);
+                    updateStatus('rose', '無法取得攝影機裝置授權');
+                });
+        }
+
+        function startCamera(deviceId) {
+            const videoElement = document.getElementById('webcam-video');
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+            }
+
+            const constraints = {
+                video: deviceId ? { deviceId: { exact: deviceId } } : true,
+                audio: false
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    cameraStream = stream;
+                    videoElement.srcObject = stream;
+                    videoElement.play();
+
+                    const cameraUtils = new window.Camera(videoElement, {
+                        onFrame: async () => {
+                            const now = performance.now();
+                            const interval = 1000 / targetFPS;
+                            if (now - lastFrameTime >= interval) {
+                                lastFrameTime = now;
+                                await hands.send({ image: videoElement });
+                            }
+                        },
+                        width: 640,
+                        height: 480
+                    });
+                    cameraUtils.start();
+                    updateStatus('emerald', '手部動補已啟動 (僅作用於手部/手指)');
+                })
+                .catch(err => {
+                    console.error('Webcam error:', err);
+                    updateStatus('rose', '攝影機啟動失敗，請檢查權限');
+                });
+        }
+
+        // --- MediaPipe Hand Results Mapping to VRM Fingers ONLY ---
+        function onHandResults(results) {
+            if (!currentVrm || !results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                return;
+            }
+
+            const leftHand = currentVrm.humanoid.getNormalizedBoneNode(THREE.VRMSkeletonBoneName.LeftHand);
+            const rightHand = currentVrm.humanoid.getNormalizedBoneNode(THREE.VRMSkeletonBoneName.RightHand);
+
+            // Iterate over detected hands
+            for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                const landmarks = results.multiHandLandmarks[i];
+                const handedness = results.multiHandedness[i].label; // 'Left' or 'Right' in MediaPipe mirror view
+
+                // In MediaPipe, left/right can be mirrored depending on camera setup. Let's map accordingly.
+                // MediaPipe 'Right' corresponds to user's Right hand (character's Left hand in standard forward view, or vice-versa).
+                // Here we map finger joints for maximum dexterity.
+                
+                const isRightHand = handedness === 'Right';
+                
+                // Map hand wrist position or orientation if needed, and finger phalanges
+                applyFingerRotation(landmarks, isRightHand);
+            }
+
+            // Update VRM pose
+            currentVrm.update(0.016);
+        }
+
+        // Helper to map MediaPipe landmarks to VRM finger bones
+        function applyFingerRotation(landmarks, isRight) {
+            if (!currentVrm || !currentVrm.humanoid) return;
+
+            // MediaPipe Hand Landmark indices:
+            // Thumb: 1, 2, 3, 4
+            // Index: 5, 6, 7, 8
+            // Middle: 9, 10, 11, 12
+            // Ring: 13, 14, 15, 16
+            // Pinky: 17, 18, 19, 20
+
+            const prefix = isRight ? 'Right' : 'Left';
+
+            // Function to calculate simple bend based on joint angles or relative distance
+            // For robust finger tracking without full inverse kinematics, we apply calculated rotations to Proximal, Intermediate, Distal bones.
+            
+            const mapFinger = (mcpIdx, pipIdx, dipIdx, boneNamePrefix) => {
+                const mcp = landmarks[mcpIdx];
+                const pip = landmarks[pipIdx];
+                const dip = landmarks[dipIdx];
+
+                // Approximate bend angle from vector dot products
+                const v1 = { x: pip.x - mcp.x, y: pip.y - mcp.y, z: pip.z - mcp.z };
+                const v2 = { x: dip.x - pip.x, y: dip.y - pip.y, z: dip.z - pip.z };
+                
+                const dot = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+                const len1 = Math.sqrt(v1.x**2 + v1.y**2 + v1.z**2);
+                const len2 = Math.sqrt(v2.x**2 + v2.y**2 + v2.z**2);
+                
+                if (len1 === 0 || len2 === 0) return;
+                
+                let cosAngle = dot / (len1 * len2);
+                cosAngle = Math.max(-1, Math.min(1, cosAngle));
+                let angle = Math.acos(cosAngle) * handSensitivity;
+
+                const proximalBone = currentVrm.humanoid.getNormalizedBoneNode(THREE.VRMSkeletonBoneName[`${prefix}${boneNamePrefix}Proximal`]);
+                const intermediateBone = currentVrm.humanoid.getNormalizedBoneNode(THREE.VRMSkeletonBoneName[`${prefix}${boneNamePrefix}Intermediate`]);
+
+                if (proximalBone) {
+                    proximalBone.rotation.x = angle * 0.8;
+                }
+                if (intermediateBone) {
+                    intermediateBone.rotation.x = angle * 1.0;
+                }
+            };
+
+            try {
+                mapFinger(1, 2, 3, 'Thumb');
+                mapFinger(5, 6, 7, 'Index');
+                mapFinger(9, 10, 11, 'Middle');
+                mapFinger(13, 14, 15, 'Ring');
+                mapFinger(17, 18, 19, 'Little');
+            } catch (e) {
+                // Ignore missing bone names gracefully across different VRM humanoids
+            }
+        }
+
+        // Render loop
+        function animate() {
+            requestAnimationFrame(animate);
+            if (currentVrm) {
+                currentVrm.update(0.016);
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- UI Interactions & Event Listeners ---
+        function setupEventListeners() {
+            // Click anywhere on screen to toggle settings (unless clicking interactive elements)
+            window.addEventListener('click', (e) => {
+                if (e.target.closest('.interactive') || e.target.closest('#settings-panel') || e.target.closest('#help-modal')) {
+                    return;
+                }
+                toggleSettings(!isSettingsOpen);
+            });
+
+            // Camera selector change
+            cameraSelect.addEventListener('change', (e) => {
+                if (e.target.value) {
+                    startCamera(e.target.value);
+                }
+            });
+
+            // VRM selector change
+            vrmSelect.addEventListener('change', (e) => {
+                const val = e.target.value;
+                if (val === 'custom') {
+                    customVrmInput.click();
+                } else {
+                    loadVRM(val);
+                }
+            });
+
+            // Custom VRM file input handler
+            customVrmInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const url = URL.createObjectURL(file);
+                    loadVRM(url);
+                }
+            });
+
+            // Sensitivity slider
+            sensitivityRange.addEventListener('input', (e) => {
+                handSensitivity = parseFloat(e.target.value);
+                sensitivityValue.innerText = `${handSensitivity.toFixed(1)}x`;
+            });
+        }
+
+        function toggleSettings(open) {
+            isSettingsOpen = open;
+            if (open) {
+                settingsPanel.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
+                settingsPanel.classList.add('opacity-100', 'pointer-events-auto', 'scale-100');
+                tapHint.classList.add('opacity-0');
+            } else {
+                settingsPanel.classList.remove('opacity-100', 'pointer-events-auto', 'scale-100');
+                settingsPanel.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+                tapHint.classList.remove('opacity-0');
+            }
+        }
+
+        function toggleHelpModal(open) {
+            if (open) {
+                helpModal.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
+                helpModal.classList.add('opacity-100', 'pointer-events-auto', 'scale-100');
+            } else {
+                helpModal.classList.remove('opacity-100', 'pointer-events-auto', 'scale-100');
+                helpModal.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+            }
+        }
+
+        function setFPS(fps) {
+            targetFPS = fps;
+            document.querySelectorAll('.fps-btn').forEach(btn => {
+                btn.className = "fps-btn py-2 rounded-xl border border-slate-700 bg-slate-950 hover:bg-slate-800 text-slate-300 transition font-medium";
+            });
+            const activeBtn = document.getElementById(`fps-${fps}`);
+            if (activeBtn) {
+                activeBtn.className = "fps-btn py-2 rounded-xl border border-sky-500 bg-sky-500/20 text-sky-300 transition font-medium";
+            }
+        }
+
+        function updateStatus(color, text) {
+            statusText.innerText = text;
+            statusDot.className = `w-2.5 h-2.5 rounded-full animate-pulse bg-${color}-400`;
+        }
+    </script>
+</body>
+</html>
