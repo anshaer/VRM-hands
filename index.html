@@ -14,16 +14,20 @@
     <!-- MediaPipe Hands CDN scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <!-- PeerJS for VMC receiving -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" crossorigin="anonymous"></script>
+
+    <!-- 引入 JsBarcode 用於產生一維條碼 -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background-color: transparent; /* 透明背景 */
-            color: #f8fafc;
+            background-color: transparent; /* 完全透明背景 */
             overflow: hidden;
             margin: 0;
         }
-        /* 確保背景層不會阻擋操作 */
         #canvas-container {
             position: absolute;
             top: 0;
@@ -33,21 +37,12 @@
             z-index: 1;
             background: transparent;
         }
-        .ui-layer {
-            position: relative;
-            z-index: 10;
-            pointer-events: none;
-        }
-        .interactive {
-            pointer-events: auto;
-        }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
         ::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.5); border-radius: 3px; }
     </style>
 
     <!-- Import Maps (ES Modules) for Three.js & VRM v2 -->
-    <!-- 確保版本對應一致，解決舊版 API 無法解析模型的問題 -->
     <script type="importmap">
         {
             "imports": {
@@ -58,64 +53,32 @@
         }
     </script>
 </head>
-<body class="relative w-screen h-screen bg-slate-900/10">
+<body class="relative w-screen h-screen bg-transparent">
 
-    <!-- 3D Canvas Container (Transparent) -->
+    <!-- 3D Canvas Container -->
     <div id="canvas-container"></div>
 
     <!-- Hidden Video Preview for MediaPipe -->
     <video id="webcam-video" class="hidden" playsinline></video>
 
-    <!-- UI Layer -->
-    <div class="ui-layer w-full h-full flex flex-col justify-between p-4 sm:p-6 select-none">
-        <!-- Top bar: Status -->
-        <div class="flex justify-between items-center w-full">
-            <div id="status-badge" class="interactive flex items-center gap-2 bg-slate-900/70 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700/50 shadow-lg text-xs sm:text-sm text-sky-400">
-                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" id="status-dot"></span>
-                <span id="status-text">初始化系統中...</span>
-            </div>
-            
-            <button onclick="window.toggleHelpModal(true)" class="interactive bg-slate-900/70 hover:bg-slate-800 backdrop-blur-md text-slate-300 hover:text-white px-3.5 py-2 rounded-full border border-slate-700/50 shadow-lg text-xs sm:text-sm transition flex items-center gap-2">
-                <i class="fa-brands fa-github"></i>
-                <span class="hidden sm:inline">部署指南</span>
-            </button>
-        </div>
-
-        <!-- Center tap hint -->
-        <div id="tap-hint" class="absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-500 opacity-80">
-            <div class="bg-slate-950/60 backdrop-blur-md border border-slate-800 px-6 py-3 rounded-full text-xs sm:text-sm text-slate-300 shadow-2xl animate-bounce">
-                👆 點擊畫面任意處開啟 / 關閉控制面板
-            </div>
-        </div>
-
-        <div class="flex justify-between items-end w-full">
-            <div class="text-xs text-slate-400 bg-slate-900/50 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-slate-800/60 hidden sm:block">
-                提示：僅啟用手部動補，無面部/身體捕捉。
-            </div>
-        </div>
-    </div>
-
-    <!-- Settings Panel -->
+    <!-- Settings Panel (Hidden by default) -->
     <div id="settings-panel" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 transition-all duration-300 opacity-0 pointer-events-none scale-95">
-        <div class="bg-slate-900/90 border border-slate-700/80 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="bg-slate-900/95 border border-slate-700/80 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
             <div class="flex justify-between items-center px-6 py-4 border-b border-slate-800 bg-slate-950/50">
                 <h2 class="text-lg font-semibold text-white flex items-center gap-2">
-                    <i class="fa-solid fa-sliders text-sky-400"></i> 設定面板
+                    <i class="fa-solid fa-sliders text-sky-400"></i> 控制面板
                 </h2>
                 <button onclick="window.toggleSettings(false)" class="text-slate-400 hover:text-white transition w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-800">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
 
-            <div class="p-6 overflow-y-auto space-y-5 text-sm">
-                <!-- Camera Select -->
-                <div class="space-y-2">
-                    <label class="block text-slate-300 font-medium">
-                        <i class="fa-solid fa-video mr-1.5 text-sky-400"></i>鏡頭選擇
-                    </label>
-                    <select id="camera-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-sky-500 transition">
-                        <option value="">載入可用鏡頭中...</option>
-                    </select>
+            <div class="p-6 overflow-y-auto space-y-6 text-sm">
+                
+                <!-- Status Display -->
+                <div class="flex items-center gap-3 bg-slate-950/50 px-4 py-3 rounded-xl border border-slate-800">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" id="status-dot"></span>
+                    <span id="status-text" class="text-slate-300 font-medium">系統初始化中...</span>
                 </div>
 
                 <!-- VRM Select -->
@@ -124,124 +87,144 @@
                         <i class="fa-solid fa-cube mr-1.5 text-sky-400"></i>VRM 模型
                     </label>
                     <select id="vrm-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-sky-500 transition">
-                        <option value="./VRM/01.vrm">./VRM/01.vrm (專案預設)</option>
+                        <option value="https://anshaer.github.io/VRM-hands/VRM/01.vrm">預設模型 (01.vrm)</option>
                         <option value="./VRM/02.vrm">./VRM/02.vrm</option>
                         <option value="custom">自訂上傳 (.vrm)...</option>
                     </select>
                     <input type="file" id="custom-vrm-input" accept=".vrm" class="hidden">
                 </div>
 
-                <!-- FPS Limiter -->
+                <!-- VMC Network Receiver -->
                 <div class="space-y-2">
                     <label class="block text-slate-300 font-medium">
-                        <i class="fa-solid fa-gauge-high mr-1.5 text-sky-400"></i>動補偵率 (FPS)
+                        <i class="fa-solid fa-network-wired mr-1.5 text-sky-400"></i>VMC 網路接收 (手機端)
                     </label>
-                    <div class="grid grid-cols-3 gap-3">
-                        <button onclick="window.setFPS(15)" id="fps-15" class="fps-btn py-2 rounded-xl border border-slate-700 bg-slate-950 hover:bg-slate-800 text-slate-300 transition font-medium">15 FPS</button>
-                        <button onclick="window.setFPS(30)" id="fps-30" class="fps-btn py-2 rounded-xl border border-sky-500 bg-sky-500/20 text-sky-300 transition font-medium">30 FPS</button>
-                        <button onclick="window.setFPS(60)" id="fps-60" class="fps-btn py-2 rounded-xl border border-slate-700 bg-slate-950 hover:bg-slate-800 text-slate-300 transition font-medium">60 FPS</button>
+                    <div class="flex flex-col items-center bg-slate-950/50 border border-slate-700 rounded-xl p-3">
+                        <svg id="barcode-svg" class="w-full max-h-20 hidden"></svg>
+                        <div class="flex gap-2 w-full mt-2">
+                            <input type="text" id="vmc-code-display" readonly placeholder="點擊生成連線碼..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 text-center font-mono tracking-widest focus:outline-none">
+                            <button onclick="window.generateVMC()" id="vmc-btn" class="bg-sky-600 hover:bg-sky-500 text-white px-5 rounded-xl transition font-medium whitespace-nowrap shadow-lg">生成</button>
+                        </div>
                     </div>
+                    <div id="vmc-status" class="text-xs text-slate-400 mt-1">狀態：尚未生成連線碼</div>
                 </div>
 
-                <!-- Sensitivity -->
+                <!-- Camera Select (MediaPipe) -->
                 <div class="space-y-2">
-                    <div class="flex justify-between items-center">
-                        <label class="block text-slate-300 font-medium">
-                            <i class="fa-solid fa-hand mr-1.5 text-sky-400"></i>手部關節靈敏度
-                        </label>
-                        <span id="sensitivity-value" class="text-xs font-mono text-sky-400 bg-sky-950/60 px-2 py-0.5 rounded border border-sky-800/50">1.2x</span>
+                    <label class="block text-slate-300 font-medium flex justify-between">
+                        <span><i class="fa-solid fa-video mr-1.5 text-sky-400"></i>單機鏡頭動補</span>
+                        <span class="text-xs text-slate-500">(會與VMC衝突，擇一使用)</span>
+                    </label>
+                    <select id="camera-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-sky-500 transition">
+                        <option value="">載入可用鏡頭中...</option>
+                    </select>
+                </div>
+
+                <!-- Settings: FPS & Sensitivity -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <label class="block text-slate-300 font-medium text-xs">動補偵率 (FPS)</label>
+                        <select id="fps-select" onchange="window.setFPS(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none">
+                            <option value="15">15 FPS</option>
+                            <option value="30" selected>30 FPS</option>
+                            <option value="60">60 FPS</option>
+                        </select>
                     </div>
-                    <input type="range" id="sensitivity-range" min="0.5" max="2.5" step="0.1" value="1.2" 
-                           class="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-sky-500">
+                    <div class="space-y-2">
+                        <label class="block text-slate-300 font-medium text-xs flex justify-between">
+                            <span>靈敏度</span>
+                            <span id="sensitivity-value" class="text-sky-400">1.2x</span>
+                        </label>
+                        <input type="range" id="sensitivity-range" min="0.5" max="2.5" step="0.1" value="1.2" class="w-full h-2 mt-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-sky-500">
+                    </div>
                 </div>
             </div>
-
+            
             <div class="px-6 py-4 border-t border-slate-800 bg-slate-950/50 flex justify-end">
-                <button onclick="window.toggleSettings(false)" class="bg-sky-600 hover:bg-sky-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg">確認 / 關閉</button>
+                <button onclick="window.toggleSettings(false)" class="bg-slate-700 hover:bg-slate-600 text-white px-6 py-2.5 rounded-xl font-medium transition">關閉</button>
             </div>
         </div>
     </div>
 
-    <!-- Help Modal -->
-    <div id="help-modal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 transition-all duration-300 opacity-0 pointer-events-none scale-95">
-        <div class="bg-slate-900/95 border border-slate-700/80 w-full max-w-lg rounded-2xl shadow-2xl p-6 text-slate-300">
-            <h2 class="text-lg font-semibold text-white mb-4"><i class="fa-brands fa-github text-sky-400"></i> GitHub Pages 部署注意</h2>
-            <p class="text-sm mb-4">確保專案資料夾結構如下，以讓預設模型正常載入：</p>
-            <pre class="bg-slate-950 p-3 rounded-xl text-xs text-sky-300 border border-slate-800 mb-4 font-mono">my-repo/
-├── index.html
-└── VRM/
-    ├── 01.vrm
-    └── 02.vrm</pre>
-            <div class="flex justify-end">
-                <button onclick="window.toggleHelpModal(false)" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl transition">了解</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Main Module Script -->
+    <!-- Main Application Script -->
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        // 使用 VRM v2 的正確導入方式
         import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-        // --- 狀態管理 ---
+        // --- 核心狀態 ---
         let scene, camera, renderer, controls, currentVrm;
         let hands, cameraStream;
         let targetFPS = 30;
         let handSensitivity = 1.2;
         let lastFrameTime = 0;
-        let isSettingsOpen = false;
-
         const clock = new THREE.Clock();
 
-        // DOM Elements
+        // --- VMC 狀態 ---
+        let peer = null;
+        let vmcConnection = null;
+
+        // --- DOM Elements ---
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
-        const tapHint = document.getElementById('tap-hint');
         const settingsPanel = document.getElementById('settings-panel');
         const cameraSelect = document.getElementById('camera-select');
         const vrmSelect = document.getElementById('vrm-select');
         const customVrmInput = document.getElementById('custom-vrm-input');
 
-        // --- 系統初始化 ---
+        // ==========================================
+        // 1. 系統初始化
+        // ==========================================
         function init() {
             initThreeJS();
             initMediaPipeHands();
             setupUI();
+            setupInteractions(); // 初始化滑鼠互動
             
-            // 確保 renderer 建立後再開始動畫迴圈，避免 'render of undefined'
+            // 啟動渲染迴圈
             animate();
 
-            // 嘗試載入預設模型
-            loadVRM('./VRM/01.vrm');
+            // 預設載入絕對網址模型，避免 GitHub Pages 子目錄徑錯誤
+            loadVRM('https://anshaer.github.io/VRM-hands/VRM/01.vrm');
         }
 
-        // --- Three.js 設置 ---
+        // ==========================================
+        // 2. Three.js 場景設置 (修正過曝問題)
+        // ==========================================
         function initThreeJS() {
             const container = document.getElementById('canvas-container');
-            
             scene = new THREE.Scene();
             
             camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20.0);
-            camera.position.set(0.0, 1.4, 1.8); // 對齊上半身/手部
+            camera.position.set(0.0, 1.3, 2.0); // 針對上半身/手部調整視角
 
             renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
-            // Three.js r154 使用 outputColorSpace
             renderer.outputColorSpace = THREE.SRGBColorSpace; 
             container.appendChild(renderer.domElement);
 
             controls = new OrbitControls(camera, renderer.domElement);
-            controls.target.set(0.0, 1.3, 0.0);
+            controls.target.set(0.0, 1.2, 0.0);
+            
+            // --- 滑鼠操作映射 ---
+            controls.mouseButtons = {
+                LEFT: THREE.MOUSE.NONE,    // 取消左鍵預設 (保留給單點擊呼叫選單)
+                MIDDLE: THREE.MOUSE.PAN,   // 中鍵平移 (拉動角色)
+                RIGHT: THREE.MOUSE.ROTATE  // 右鍵旋轉 (拉動視角)
+            };
+            controls.enableZoom = true;    // 滾輪角色縮放
+            
             controls.update();
 
-            const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+            // 💡 修正過曝：MToon 材質對光很敏感，需大幅調降光照強度
+            const light = new THREE.DirectionalLight(0xffffff, 0.8); 
             light.position.set(1.0, 1.0, 1.0).normalize();
             scene.add(light);
-            scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+            
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.1); 
+            scene.add(ambientLight);
 
             window.addEventListener('resize', () => {
                 camera.aspect = window.innerWidth / window.innerHeight;
@@ -250,90 +233,70 @@
             });
         }
 
-        // --- 載入 VRM v2 模型 ---
+        // ==========================================
+        // 3. VRM 模型載入 (升級 v2 寫法)
+        // ==========================================
         function loadVRM(url) {
-            updateStatus('amber', `載入模型中 (${url})...`);
+            updateStatus('amber', `載入模型中...`);
             
             const loader = new GLTFLoader();
             loader.crossOrigin = 'anonymous';
 
-            // 註冊 VRM Plugin (v2 必備)
-            loader.register((parser) => {
-                return new VRMLoaderPlugin(parser);
-            });
+            // 註冊 v2 Plugin
+            loader.register((parser) => new VRMLoaderPlugin(parser));
 
             loader.load(
                 url,
                 (gltf) => {
                     const vrm = gltf.userData.vrm;
                     if (!vrm) {
-                        updateStatus('rose', '這不是有效的 VRM 模型');
+                        updateStatus('rose', '無效的 VRM 模型');
                         return;
                     }
-
                     if (currentVrm) {
                         scene.remove(currentVrm.scene);
                         VRMUtils.deepDispose(currentVrm.scene);
                     }
-
-                    // 移除不需要的節點並旋轉模型面向鏡頭
                     VRMUtils.removeUnnecessaryJoints(gltf.scene);
-                    vrm.scene.rotation.y = Math.PI;
-
                     scene.add(vrm.scene);
                     currentVrm = vrm;
-
-                    updateStatus('emerald', `模型載入成功 - 準備手部動補`);
+                    updateStatus('emerald', `模型載入成功 (等待動補)`);
                 },
-                (progress) => {
-                    if (progress.total > 0) {
-                        const percent = Math.round((progress.loaded / progress.total) * 100);
-                        if (percent < 100) updateStatus('amber', `載入中... ${percent}%`);
-                    }
-                },
+                (progress) => {},
                 (error) => {
-                    console.error('載入失敗:', error);
-                    updateStatus('rose', `找不到模型：${url} (請確認路徑或手動上傳)`);
+                    console.error(error);
+                    updateStatus('rose', `模型載入失敗`);
                 }
             );
         }
 
-        // --- MediaPipe Hands 設置 ---
+        // ==========================================
+        // 4. MediaPipe 單機手部動補
+        // ==========================================
         function initMediaPipeHands() {
-            const videoElement = document.getElementById('webcam-video');
-
-            hands = new window.Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            hands.setOptions({
-                maxNumHands: 2,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
-            });
-            hands.onResults(onHandResults);
+            hands = new window.Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+            hands.onResults(onMediaPipeResults);
 
             navigator.mediaDevices.enumerateDevices().then(devices => {
                 const videoDevices = devices.filter(d => d.kind === 'videoinput');
-                cameraSelect.innerHTML = '';
+                cameraSelect.innerHTML = '<option value="">(關閉單機鏡頭)</option>';
                 videoDevices.forEach((device, index) => {
                     const option = document.createElement('option');
                     option.value = device.deviceId;
                     option.text = device.label || `攝影機 ${index + 1}`;
                     cameraSelect.appendChild(option);
                 });
-                if (videoDevices.length > 0) startCamera(videoDevices[0].deviceId);
-            }).catch(e => updateStatus('rose', '無法取得攝影機授權'));
+            }).catch(e => console.log('未取得攝影機權限'));
         }
 
         function startCamera(deviceId) {
             const videoElement = document.getElementById('webcam-video');
             if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+            if (!deviceId) return; // 使用者選擇關閉
 
-            navigator.mediaDevices.getUserMedia({
-                video: deviceId ? { deviceId: { exact: deviceId } } : true
-            }).then(stream => {
+            updateStatus('amber', '啟動鏡頭中...');
+            navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } }).then(stream => {
                 cameraStream = stream;
                 videoElement.srcObject = stream;
                 videoElement.play();
@@ -349,76 +312,222 @@
                     width: 640, height: 480
                 });
                 cameraUtils.start();
-                updateStatus('emerald', '手部動補已啟動 (僅作用於手指)');
-            }).catch(e => updateStatus('rose', '攝影機啟動失敗'));
+                updateStatus('emerald', 'MediaPipe 手部動補執行中');
+            }).catch(e => updateStatus('rose', '鏡頭啟動失敗'));
         }
 
-        // --- 核心：將 MediaPipe 對應到 VRM 骨骼 ---
-        function onHandResults(results) {
+        function onMediaPipeResults(results) {
             if (!currentVrm || !currentVrm.humanoid || !results.multiHandLandmarks) return;
-
-            // 預設將手勢歸零（避免手離開畫面時卡在奇怪的角度）
-            // 注意：實作中如果沒有偵測到手，這裡不做清空以保持最後姿勢，依需求可調整。
-
             results.multiHandLandmarks.forEach((landmarks, index) => {
                 const isRight = results.multiHandedness[index].label === 'Right';
-                applyFingerRotation(landmarks, isRight);
+                applyMediaPipeFingerRotation(landmarks, isRight);
             });
         }
 
-        function applyFingerRotation(landmarks, isRight) {
-            // VRM v2 的骨骼名稱為 camelCase
+        function applyMediaPipeFingerRotation(landmarks, isRight) {
             const prefix = isRight ? 'right' : 'left';
-
             const mapFinger = (mcpIdx, pipIdx, dipIdx, boneName) => {
                 const mcp = landmarks[mcpIdx], pip = landmarks[pipIdx], dip = landmarks[dipIdx];
                 const v1 = { x: pip.x - mcp.x, y: pip.y - mcp.y, z: pip.z - mcp.z };
                 const v2 = { x: dip.x - pip.x, y: dip.y - pip.y, z: dip.z - pip.z };
-                
                 const dot = v1.x*v2.x + v1.y*v2.y + v1.z*v2.z;
                 const len1 = Math.sqrt(v1.x**2 + v1.y**2 + v1.z**2);
                 const len2 = Math.sqrt(v2.x**2 + v2.y**2 + v2.z**2);
-                
                 if (len1 === 0 || len2 === 0) return;
                 
                 let cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
                 let angle = Math.acos(cosAngle) * handSensitivity;
 
-                // 在 VRM v2 中，使用 getNormalizedBoneNode
                 const proximal = currentVrm.humanoid.getNormalizedBoneNode(`${prefix}${boneName}Proximal`);
                 const intermediate = currentVrm.humanoid.getNormalizedBoneNode(`${prefix}${boneName}Intermediate`);
-
                 if (proximal) proximal.rotation.z = isRight ? -angle * 0.8 : angle * 0.8;
                 if (intermediate) intermediate.rotation.z = isRight ? -angle : angle;
             };
-
-            try {
-                mapFinger(1, 2, 3, 'Thumb');
-                mapFinger(5, 6, 7, 'Index');
-                mapFinger(9, 10, 11, 'Middle');
-                mapFinger(13, 14, 15, 'Ring');
-                mapFinger(17, 18, 19, 'Little');
-            } catch(e) {}
+            mapFinger(1, 2, 3, 'Thumb');
+            mapFinger(5, 6, 7, 'Index');
+            mapFinger(9, 10, 11, 'Middle');
+            mapFinger(13, 14, 15, 'Ring');
+            mapFinger(17, 18, 19, 'Little');
         }
 
-        // --- 動畫迴圈 (安全執行) ---
-        function animate() {
-            requestAnimationFrame(animate);
-            const delta = clock.getDelta();
+        // ==========================================
+        // 5. VMC / OSC 網路接收解析邏輯
+        // ==========================================
+        
+        // 嚴格限制只允許手部/手指骨骼與手臂 (加入手臂才能帶動手部移動)
+        const ALLOWED_VMC_BONES = [
+            'LeftShoulder', 'LeftUpperArm', 'LeftLowerArm',
+            'RightShoulder', 'RightUpperArm', 'RightLowerArm',
+            'LeftHand', 'RightHand',
+            'LeftThumbProximal', 'LeftThumbIntermediate', 'LeftThumbDistal',
+            'LeftIndexProximal', 'LeftIndexIntermediate', 'LeftIndexDistal',
+            'LeftMiddleProximal', 'LeftMiddleIntermediate', 'LeftMiddleDistal',
+            'LeftRingProximal', 'LeftRingIntermediate', 'LeftRingDistal',
+            'LeftLittleProximal', 'LeftLittleIntermediate', 'LeftLittleDistal',
+            'RightThumbProximal', 'RightThumbIntermediate', 'RightThumbDistal',
+            'RightIndexProximal', 'RightIndexIntermediate', 'RightIndexDistal',
+            'RightMiddleProximal', 'RightMiddleIntermediate', 'RightMiddleDistal',
+            'RightRingProximal', 'RightRingIntermediate', 'RightRingDistal',
+            'RightLittleProximal', 'RightLittleIntermediate', 'RightLittleDistal'
+        ];
+
+        // OSC 解析器 (提取自 receiver.html)
+        function oscRead(input) {
+            let b;
+            if (ArrayBuffer.isView(input)) b = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+            else if (input instanceof ArrayBuffer) b = new Uint8Array(input);
+            else return [];
+
+            if (b.length > 65536 || b.length < 4) return [];
+            const out = [], decoder = new TextDecoder("utf-8", { fatal: true });
             
-            if (currentVrm) currentVrm.update(delta);
-            if (renderer && scene && camera) renderer.render(scene, camera);
+            function parse(start, end, depth) {
+                if (depth > 3 || out.length > 128) return;
+                let at = start;
+                const readString = () => {
+                    let begin = at;
+                    while (at < end && b[at]) at++;
+                    let value = decoder.decode(b.subarray(begin, at));
+                    at = start + ((at - start + 4) & ~3);
+                    return value;
+                };
+                let address = readString();
+                if (address === "#bundle") {
+                    at = start + 16;
+                    while (at < end) {
+                        let size = new DataView(b.buffer, b.byteOffset + at, 4).getUint32(0, false);
+                        at += 4;
+                        parse(at, at + size, depth + 1);
+                        at += size;
+                    }
+                    return;
+                }
+                let tags = readString();
+                let args = [];
+                for (let type of tags.slice(1)) {
+                    if (type === "s") args.push(readString());
+                    else if (type === "f" || type === "i") {
+                        let v = new DataView(b.buffer, b.byteOffset + at, 4);
+                        args.push(type === "f" ? v.getFloat32(0, false) : v.getInt32(0, false));
+                        at += 4;
+                    }
+                }
+                out.push({ address, types: tags.slice(1), args });
+            }
+            try { parse(0, b.length, 0); } catch (e) {}
+            return out;
         }
 
-        // --- UI 控制與事件 ---
-        function setupUI() {
-            // 背景點擊開啟/關閉設定
-            window.addEventListener('click', (e) => {
-                if (e.target.closest('.interactive') || e.target.closest('#settings-panel') || e.target.closest('#help-modal')) return;
-                window.toggleSettings(!isSettingsOpen);
+        // 綁定給全域呼叫的 VMC 連線函數 (由網頁端生成連線碼)
+        window.generateVMC = () => {
+            // 生成 12 碼數字隨機連線碼
+            let code = "";
+            for(let i=0; i<12; i++) code += Math.floor(Math.random() * 10);
+            
+            // 顯示格式化後的代碼 (如: 1234-5678-9012)
+            document.getElementById('vmc-code-display').value = code.match(/.{1,4}/g).join('-');
+            
+            // 繪製一維條碼
+            const barcodeSvg = document.getElementById('barcode-svg');
+            barcodeSvg.classList.remove('hidden');
+            JsBarcode("#barcode-svg", code, {
+                format: "CODE128",
+                lineColor: "#e2e8f0", 
+                background: "transparent",
+                displayValue: false, 
+                margin: 0,
+                height: 50
             });
 
-            cameraSelect.addEventListener('change', (e) => { if(e.target.value) startCamera(e.target.value); });
+            const vmcStatus = document.getElementById('vmc-status');
+            
+            // 斷開舊的連線
+            if (peer) { peer.destroy(); peer = null; }
+            vmcStatus.innerText = "狀態：初始化接收端房間中...";
+            
+            // 註冊為 Host 等待手機連接
+            peer = new Peer("ansha-vmc2-" + code, { host: "0.peerjs.com", port: 443, path: "/", secure: true, debug: 0 });
+            
+            peer.on('open', () => {
+                vmcStatus.innerText = "狀態：等待手機端連線... (請掃描或輸入連線碼)";
+            });
+
+            // 處理 OSC 訊息套用至 VRM 的共用函數
+            const applyOSCMessages = (messages) => {
+                for (let msg of messages) {
+                    if (msg.address === "/VMC/Ext/Bone/Pos" && ALLOWED_VMC_BONES.includes(msg.args[0])) {
+                        let boneName = msg.args[0];
+                        let vrmNodeName = boneName.charAt(0).toLowerCase() + boneName.slice(1);
+                        let node = currentVrm.humanoid.getNormalizedBoneNode(vrmNodeName);
+                        
+                        if (node) {
+                            // VMC (Unity 左手系) 轉 Three.js (右手系) Quaternion 轉換
+                            let qx = msg.args[4], qy = msg.args[5], qz = msg.args[6], qw = msg.args[7];
+                            node.quaternion.set(-qx, -qy, qz, qw);
+                        }
+                    }
+                }
+            };
+
+            // 監聽來自手機端的連線請求
+            peer.on('connection', (conn) => {
+                vmcStatus.innerText = "狀態：手機端連接中...";
+
+                conn.on('open', () => {
+                    vmcStatus.innerText = "狀態：手機端已連接，等待數據...";
+                });
+
+                conn.on('data', async (m) => {
+                    // 1. 若接收到的是 Blob，轉成 ArrayBuffer
+                    if (m instanceof Blob) {
+                        m = await m.arrayBuffer();
+                    }
+
+                    // 2. 處理直接傳送 ArrayBuffer 的情況 (多數 Web VMC 實作)
+                    if (m instanceof ArrayBuffer || m instanceof Uint8Array) {
+                        if (!vmcConnection) {
+                            vmcStatus.innerText = "狀態：VMC 已連線 (接收中)";
+                            updateStatus('emerald', 'VMC 動補執行中');
+                            vmcConnection = conn;
+                        }
+                        if (currentVrm) {
+                            let messages = oscRead(m);
+                            applyOSCMessages(messages);
+                        }
+                        return;
+                    }
+
+                    // 3. 處理 JSON 包裝的情況
+                    if (typeof m === 'object' && m !== null) {
+                        if (m.kind === "hello") {
+                            vmcStatus.innerText = "狀態：VMC 已連線 (接收中)";
+                            updateStatus('emerald', 'VMC 動補執行中');
+                            vmcConnection = conn;
+                        }
+                        else if (m.kind === "vmc" && currentVrm) {
+                            let messages = oscRead(m.packet);
+                            applyOSCMessages(messages);
+                        }
+                    }
+                });
+                
+                conn.on('close', () => { 
+                    vmcStatus.innerText = "狀態：連線中斷，等待手機重新連線..."; 
+                    vmcConnection = null; 
+                    updateStatus('amber', 'VMC 連線已中斷');
+                });
+            });
+
+            peer.on('error', (err) => { vmcStatus.innerText = "狀態：房間建立失敗 (" + err.type + ")"; });
+        };
+
+        // ==========================================
+        // 6. UI 與 渲染迴圈
+        // ==========================================
+        function setupUI() {
+            cameraSelect.addEventListener('change', (e) => { 
+                startCamera(e.target.value); 
+            });
             
             vrmSelect.addEventListener('change', (e) => {
                 if (e.target.value === 'custom') customVrmInput.click();
@@ -436,34 +545,55 @@
             });
         }
 
+        // ==========================================
+        // 6.5. 畫面點擊與互動設定
+        // ==========================================
+        function setupInteractions() {
+            let pointerDownTime = 0;
+            let startX = 0, startY = 0;
+            const container = document.getElementById('canvas-container');
+            
+            container.addEventListener('pointerdown', (e) => {
+                pointerDownTime = Date.now();
+                startX = e.clientX;
+                startY = e.clientY;
+            });
+
+            container.addEventListener('pointerup', (e) => {
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const dt = Date.now() - pointerDownTime;
+
+                // 如果是左鍵 (或單指觸控) 且沒有大幅拖曳 (距離小於 10px)、點擊時間短
+                if (e.button === 0 && dist < 10 && dt < 400) {
+                    window.toggleSettings(true);
+                }
+            });
+            
+            // 阻止網頁預設的右鍵選單彈出
+            container.addEventListener('contextmenu', e => e.preventDefault());
+        }
+
         function updateStatus(color, text) {
             statusText.innerText = text;
             statusDot.className = `w-2.5 h-2.5 rounded-full animate-pulse bg-${color}-400`;
         }
 
-        // 曝露函數給 HTML inline onclick 使用
         window.toggleSettings = (open) => {
-            isSettingsOpen = open;
             settingsPanel.style.opacity = open ? '1' : '0';
             settingsPanel.style.pointerEvents = open ? 'auto' : 'none';
             settingsPanel.style.transform = open ? 'scale(1)' : 'scale(0.95)';
-            tapHint.style.opacity = open ? '0' : '0.8';
         };
 
-        window.toggleHelpModal = (open) => {
-            const modal = document.getElementById('help-modal');
-            modal.style.opacity = open ? '1' : '0';
-            modal.style.pointerEvents = open ? 'auto' : 'none';
-            modal.style.transform = open ? 'scale(1)' : 'scale(0.95)';
-        };
+        window.setFPS = (fps) => { targetFPS = parseInt(fps); };
 
-        window.setFPS = (fps) => {
-            targetFPS = fps;
-            document.querySelectorAll('.fps-btn').forEach(btn => {
-                btn.className = "fps-btn py-2 rounded-xl border border-slate-700 bg-slate-950 hover:bg-slate-800 text-slate-300 transition font-medium";
-            });
-            document.getElementById(`fps-${fps}`).className = "fps-btn py-2 rounded-xl border border-sky-500 bg-sky-500/20 text-sky-300 transition font-medium";
-        };
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            if (currentVrm) currentVrm.update(delta);
+            if (renderer && scene && camera) renderer.render(scene, camera);
+        }
 
         // 啟動程式
         window.addEventListener('DOMContentLoaded', init);
