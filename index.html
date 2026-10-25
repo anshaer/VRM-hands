@@ -100,13 +100,14 @@
                         <i class="fa-solid fa-network-wired mr-1.5 text-sky-400"></i>VMC 網路接收 (手機端)
                     </label>
                     <div class="flex flex-col items-center bg-slate-950/50 border border-slate-700 rounded-xl p-3">
-                        <svg id="barcode-svg" class="w-full max-h-20 hidden"></svg>
+                        <svg id="barcode-svg" class="max-w-full rounded hidden"></svg>
                         <div class="flex gap-2 w-full mt-2">
                             <input type="text" id="vmc-code-display" readonly placeholder="點擊生成連線碼..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-slate-200 text-center font-mono tracking-widest focus:outline-none">
                             <button onclick="window.generateVMC()" id="vmc-btn" class="bg-sky-600 hover:bg-sky-500 text-white px-5 rounded-xl transition font-medium whitespace-nowrap shadow-lg">生成</button>
                         </div>
                     </div>
                     <div id="vmc-status" class="text-xs text-slate-400 mt-1">狀態：尚未生成連線碼</div>
+                    <div class="text-[10px] text-amber-400 mt-1">提示：手機端請記得勾選「手掌／手指」與「上半身/全身」以傳送手部動作。</div>
                 </div>
 
                 <!-- Camera Select (MediaPipe) -->
@@ -354,11 +355,14 @@
         // 5. VMC / OSC 網路接收解析邏輯
         // ==========================================
         
-        // 嚴格限制只允許手部/手指骨骼與手臂 (加入手臂才能帶動手部移動)
+        // 擴充允許的骨骼，加入身體軀幹基準與全身骨骼，確保手部能相對於身體正確移動
         const ALLOWED_VMC_BONES = [
-            'LeftShoulder', 'LeftUpperArm', 'LeftLowerArm',
-            'RightShoulder', 'RightUpperArm', 'RightLowerArm',
-            'LeftHand', 'RightHand',
+            'Hips', 'Spine', 'Chest', 'UpperChest', 'Neck', 'Head',
+            'LeftEye', 'RightEye', 'Jaw',
+            'LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand',
+            'RightShoulder', 'RightUpperArm', 'RightLowerArm', 'RightHand',
+            'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes',
+            'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes',
             'LeftThumbProximal', 'LeftThumbIntermediate', 'LeftThumbDistal',
             'LeftIndexProximal', 'LeftIndexIntermediate', 'LeftIndexDistal',
             'LeftMiddleProximal', 'LeftMiddleIntermediate', 'LeftMiddleDistal',
@@ -376,6 +380,7 @@
             let b;
             if (ArrayBuffer.isView(input)) b = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
             else if (input instanceof ArrayBuffer) b = new Uint8Array(input);
+            else if (Array.isArray(input)) b = new Uint8Array(input); // 支援 generic array 格式
             else return [];
 
             if (b.length > 65536 || b.length < 4) return [];
@@ -427,16 +432,16 @@
             // 顯示格式化後的代碼 (如: 1234-5678-9012)
             document.getElementById('vmc-code-display').value = code.match(/.{1,4}/g).join('-');
             
-            // 繪製一維條碼
+            // 繪製一維條碼 (修正為高對比白底黑線與適當留白，確保掃描成功)
             const barcodeSvg = document.getElementById('barcode-svg');
             barcodeSvg.classList.remove('hidden');
             JsBarcode("#barcode-svg", code, {
                 format: "CODE128",
-                lineColor: "#e2e8f0", 
-                background: "transparent",
-                displayValue: false, 
-                margin: 0,
-                height: 50
+                lineColor: "#000000", 
+                background: "#ffffff",
+                displayValue: true, 
+                margin: 10,
+                height: 60
             });
 
             const vmcStatus = document.getElementById('vmc-status');
@@ -454,8 +459,17 @@
 
             // 處理 OSC 訊息套用至 VRM 的共用函數
             const applyOSCMessages = (messages) => {
+                let boneCount = 0;
                 for (let msg of messages) {
-                    if (msg.address === "/VMC/Ext/Bone/Pos" && ALLOWED_VMC_BONES.includes(msg.args[0])) {
+                    if (msg.address === "/VMC/Ext/Root/Pos") {
+                        let px = msg.args[1], py = msg.args[2], pz = msg.args[3];
+                        let qx = msg.args[4], qy = msg.args[5], qz = msg.args[6], qw = msg.args[7];
+                        if (currentVrm && currentVrm.scene) {
+                            currentVrm.scene.position.set(-px, py, -pz);
+                            currentVrm.scene.quaternion.set(-qx, -qy, qz, qw);
+                        }
+                    }
+                    else if (msg.address === "/VMC/Ext/Bone/Pos" && ALLOWED_VMC_BONES.includes(msg.args[0])) {
                         let boneName = msg.args[0];
                         let vrmNodeName = boneName.charAt(0).toLowerCase() + boneName.slice(1);
                         let node = currentVrm.humanoid.getNormalizedBoneNode(vrmNodeName);
@@ -464,8 +478,12 @@
                             // VMC (Unity 左手系) 轉 Three.js (右手系) Quaternion 轉換
                             let qx = msg.args[4], qy = msg.args[5], qz = msg.args[6], qw = msg.args[7];
                             node.quaternion.set(-qx, -qy, qz, qw);
+                            boneCount++;
                         }
                     }
+                }
+                if (boneCount > 0 && vmcStatus) {
+                    vmcStatus.innerText = `狀態：VMC 已連線 (接收中, 更新骨骼數: ${boneCount})`;
                 }
             };
 
