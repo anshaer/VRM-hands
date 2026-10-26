@@ -118,7 +118,30 @@
             toggleSettings();
         }
 
+        async function loadVRMFiles() {
+            const vrmDir = './VRM';
+            const vrmSelect = document.getElementById('vrmSelect');
+            const vrmSelectSettings = document.getElementById('vrmSelectSettings');
+
+            const response = await fetch(vrmDir);
+            const files = await response.text();
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(files, 'text/html');
+            const links = htmlDoc.querySelectorAll('a');
+
+            links.forEach(link => {
+                if (link.href.endsWith('.vrm')) {
+                    const option = document.createElement('option');
+                    option.value = link.href;
+                    option.textContent = link.href;
+                    vrmSelect.appendChild(option);
+                    vrmSelectSettings.appendChild(option.cloneNode());
+                }
+            });
+        }
+
         init();
+        loadVRMFiles();
     </script>
 </body>
 </html>
